@@ -9,27 +9,30 @@ export default function HomePage() {
   const [error, setError] = useState(null)
 
   async function handleAnalyse() {
-    setLoading(true)
-    setError(null)
-    setResult(null)
+  setLoading(true)
+  setError(null)
+  setResult(null)
 
-    // mock response for now — no API cost
-    setTimeout(() => {
-      setResult({
-        summary: "The Federal Reserve held interest rates steady amid cooling inflation signals.",
-        insights: [
-          "Rate pause signals potential cuts in Q3 2026",
-          "Bond markets rallying in response to dovish tone",
-          "Emerging markets may benefit from weaker dollar outlook"
-        ],
-        talking_points: [
-          "Monetary policy is shifting from restrictive to neutral",
-          "Investors should watch PCE inflation data closely"
-        ],
-        trend: "Dovish pivot building momentum"
-      })
-      setLoading(false)
-    }, 1500)
+  try {
+    const response = await fetch("/api/analyse", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url })
+    })
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      setError(data.error || "Something went wrong")
+      return
+    }
+
+    setResult(data)
+  } catch (err) {
+    setError("Failed to connect to the server")
+  } finally {
+    setLoading(false)
+  }
   }
 
   return (
