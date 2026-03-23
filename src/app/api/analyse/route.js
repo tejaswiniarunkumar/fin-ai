@@ -1,8 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk"
+import { fetchArticle } from "@/lib/fetchArticle"
 
-// USE_MOCK = true means no API calls, no cost
-// flip to false when you're ready to test real Claude
-const USE_MOCK = true
+const USE_MOCK = false
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
@@ -10,11 +9,9 @@ const client = new Anthropic({
 
 export async function POST(request) {
   try {
-    // Step 1 — get the URL the user typed from the request
     const body = await request.json()
     const { url } = body
 
-    // Step 2 — validate it
     if (!url) {
       return Response.json(
         { error: "No URL provided" },
@@ -22,25 +19,38 @@ export async function POST(request) {
       )
     }
 
-    // Step 3 — return mock or real response
     if (USE_MOCK) {
-      return Response.json(getMockResponse(url))
+      return Response.json(getMockResponse())
     }
 
-    // Step 4 — real Claude call (only runs when USE_MOCK = false)
+    // fetch the article text first
+    const articleText = await fetchArticle(url)
+
+    if (!articleText) {
+      return Response.json(
+        { error: "Could not fetch article content" },
+        { status: 400 }
+      )
+    }
+
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1000,
       messages: [
         {
           role: "user",
-          content: buildPrompt(url)
+          content: buildPrompt(articleText)
         }
       ]
     })
 
     const text = response.content[0].text
-    const parsed = JSON.parse(text)
+    const cleaned = text
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim()
+
+    const parsed = JSON.parse(cleaned)
     return Response.json(parsed)
 
   } catch (error) {
@@ -52,13 +62,14 @@ export async function POST(request) {
   }
 }
 
-// the prompt we send to Claude
-function buildPrompt(url) {
-  return `You are a financial analyst assistant helping someone prepare for job interviews.
-  
-Analyse this financial article URL: ${url}
+function buildPrompt(articleText) {
+  return `You are a financial analyst assistant. You must respond with ONLY a valid JSON object, no other text, no markdown, no explanation before or after.
 
-Return ONLY a JSON object with exactly this structure, no other text:
+Analyse this financial article text:
+
+${articleText}
+
+Return ONLY this JSON structure:
 {
   "summary": "2-3 sentence summary of the article",
   "insights": ["insight 1", "insight 2", "insight 3"],
@@ -67,8 +78,7 @@ Return ONLY a JSON object with exactly this structure, no other text:
 }`
 }
 
-// mock response for UI development
-function getMockResponse(url) {
+function getMockResponse() {
   return {
     summary: "The Federal Reserve held interest rates steady amid cooling inflation signals, signalling a potential pivot in monetary policy approaching.",
     insights: [
