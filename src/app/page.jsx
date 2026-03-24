@@ -7,11 +7,14 @@ export default function HomePage() {
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [marketData, setMarketData] = useState({})
+  const [marketLoading, setMarketLoading] = useState(false)
 
   async function handleAnalyse() {
     setLoading(true)
     setError(null)
     setResult(null)
+    setMarketData({})
 
     try {
       const response = await fetch("/api/analyse", {
@@ -28,10 +31,42 @@ export default function HomePage() {
       }
 
       setResult(data)
+
+      // fetch live prices for stocks Claude identified
+      if (data.affected_stocks && data.affected_stocks.length > 0) {
+        fetchMarketData(data.affected_stocks.map(s => s.ticker))
+      }
+
     } catch (err) {
       setError("Failed to connect to the server")
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function fetchMarketData(tickers) {
+    setMarketLoading(true)
+    try {
+      const response = await fetch("/api/market", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tickers })
+      })
+
+      const data = await response.json()
+
+      // convert array to map keyed by ticker for easy lookup
+      // { "JPM": { price: 289.91 ... }, "GS": { price: 831.27 ... } }
+      const mapped = {}
+      data.market_data.forEach(stock => {
+        mapped[stock.ticker] = stock
+      })
+      setMarketData(mapped)
+
+    } catch (err) {
+      console.error("Market data fetch failed:", err)
+    } finally {
+      setMarketLoading(false)
     }
   }
 
@@ -101,49 +136,77 @@ export default function HomePage() {
             <p className="text-gray-500 text-xs">{result.risk_reason}</p>
           </div>
 
-          {/* Affected Stocks */}
+          {/* Affected Stocks with live prices */}
           <div className="border border-gray-200 rounded-xl p-6">
-            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">
-              Affected Stocks
-            </h2>
-            <div className="space-y-3">
-              {result.affected_stocks.map((stock, i) => (
-                <div key={i} className="flex items-start gap-3">
-                  <span className="bg-black text-white text-xs px-2 py-1 rounded font-mono">
-                    {stock.ticker}
-                  </span>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{stock.name}</span>
-                      <span className={`text-xs ${
-                        stock.impact === "positive"
-                          ? "text-green-600"
-                          : stock.impact === "negative"
-                          ? "text-red-600"
-                          : "text-gray-500"
-                      }`}>
-                        {stock.impact === "positive" ? "↑" : stock.impact === "negative" ? "↓" : "→"} {stock.impact}
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                Affected Stocks
+              </h2>
+              {marketLoading && (
+                <span className="text-xs text-gray-400">fetching live prices...</span>
+              )}
+            </div>
+            <div className="space-y-4">
+              {result.affected_stocks.map((stock, i) => {
+                const live = marketData[stock.ticker]
+                return (
+                  <div key={i} className="flex items-start justify-between gap-3">
+
+                    {/* Left — ticker + name + reason */}
+                    <div className="flex items-start gap-3">
+                      <span className="bg-black text-white text-xs px-2 py-1 rounded font-mono mt-0.5">
+                        {stock.ticker}
                       </span>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">{stock.name}</span>
+                          <span className={`text-xs ${
+                            stock.impact === "positive"
+                              ? "text-green-600"
+                              : stock.impact === "negative"
+                              ? "text-red-600"
+                              : "text-gray-500"
+                          }`}>
+                            {stock.impact === "positive" ? "↑" : stock.impact === "negative" ? "↓" : "→"} {stock.impact}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500">{stock.reason}</p>
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-500">{stock.reason}</p>
+
+                    {/* Right — live price */}
+                    {live && live.price && (
+                      <div className="text-right shrink-0">
+                        <div className="text-sm font-semibold">
+                          {live.currency === "USD" ? "$" : "£"}{live.price}
+                        </div>
+                        <div className={`text-xs font-medium ${
+                          live.change_pct > 0
+                            ? "text-green-600"
+                            : live.change_pct < 0
+                            ? "text-red-600"
+                            : "text-gray-500"
+                        }`}>
+                          {live.change_pct > 0 ? "+" : ""}{live.change_pct}% today
+                        </div>
+                      </div>
+                    )}
+
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
 
           {/* Sectors + Indices + Commodities */}
           <div className="grid grid-cols-3 gap-4">
-
             <div className="border border-gray-200 rounded-xl p-4">
               <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
                 Sectors
               </h2>
               <div className="space-y-1">
                 {result.affected_sectors.map((sector, i) => (
-                  <span key={i} className="block text-sm text-gray-700">
-                    • {sector}
-                  </span>
+                  <span key={i} className="block text-sm text-gray-700">• {sector}</span>
                 ))}
               </div>
             </div>
@@ -157,11 +220,9 @@ export default function HomePage() {
                   <div key={i}>
                     <span className="text-sm font-medium">{index.name}</span>
                     <span className={`ml-2 text-xs ${
-                      index.impact === "positive"
-                        ? "text-green-600"
-                        : index.impact === "negative"
-                        ? "text-red-600"
-                        : "text-gray-500"
+                      index.impact === "positive" ? "text-green-600"
+                      : index.impact === "negative" ? "text-red-600"
+                      : "text-gray-500"
                     }`}>
                       {index.impact === "positive" ? "↑" : index.impact === "negative" ? "↓" : "→"}
                     </span>
@@ -179,11 +240,9 @@ export default function HomePage() {
                   <div key={i}>
                     <span className="text-sm font-medium">{commodity.name}</span>
                     <span className={`ml-2 text-xs ${
-                      commodity.impact === "positive"
-                        ? "text-green-600"
-                        : commodity.impact === "negative"
-                        ? "text-red-600"
-                        : "text-gray-500"
+                      commodity.impact === "positive" ? "text-green-600"
+                      : commodity.impact === "negative" ? "text-red-600"
+                      : "text-gray-500"
                     }`}>
                       {commodity.impact === "positive" ? "↑" : commodity.impact === "negative" ? "↓" : "→"}
                     </span>
