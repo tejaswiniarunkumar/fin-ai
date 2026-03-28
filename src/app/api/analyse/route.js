@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { fetchArticle } from "@/lib/fetchArticle"
+import { storeArticle, findSimilarArticles, formatContext } from "@/lib/rag"
 
 const USE_MOCK = true
 
@@ -23,6 +24,7 @@ export async function POST(request) {
       return Response.json(getMockResponse())
     }
 
+    // Step 1 — fetch article text
     const articleText = await fetchArticle(url)
 
     if (!articleText) {
@@ -32,13 +34,18 @@ export async function POST(request) {
       )
     }
 
+    // Step 2 — find similar past articles (RAG retrieval)
+    const similarArticles = await findSimilarArticles(articleText)
+    const context = formatContext(similarArticles)
+
+    // Step 3 — send to Claude with context
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 2000,
       messages: [
         {
           role: "user",
-          content: buildPrompt(articleText)
+          content: buildPrompt(articleText, context)
         }
       ]
     })
@@ -50,7 +57,26 @@ export async function POST(request) {
       .trim()
 
     const parsed = JSON.parse(cleaned)
-    return Response.json(parsed)
+
+    // Step 4 — store article + analysis in Supabase for future RAG
+    await storeArticle({
+      url,
+      content: articleText,
+      summary: parsed.summary,
+      market_signal: parsed.market_signal,
+      risk_level: parsed.risk_level,
+      affected_sectors: parsed.affected_sectors,
+      affected_stocks: parsed.affected_stocks,
+      historical_examples: parsed.historical_examples,
+      insights: parsed.insights
+    })
+
+    // Step 5 — return result with info about RAG context used
+    return Response.json({
+      ...parsed,
+      rag_context_used: similarArticles.length > 0,
+      similar_articles_found: similarArticles.length
+    })
 
   } catch (error) {
     console.error("API route error:", error)
@@ -61,8 +87,10 @@ export async function POST(request) {
   }
 }
 
-function buildPrompt(articleText) {
+function buildPrompt(articleText, context) {
   return `You are a senior financial analyst. You must respond with ONLY a valid JSON object, no other text, no markdown, no explanation before or after.
+
+${context}
 
 Analyse this financial article and assess its market impact:
 
@@ -76,8 +104,7 @@ Return ONLY this JSON structure:
   "risk_reason": "one sentence explaining the risk level",
   "affected_sectors": ["sector 1", "sector 2", "sector 3"],
   "affected_stocks": [
-    { "ticker": "AAPL", "name": "Apple", "impact": "positive or negative or neutral", "reason": "one sentence" },
-    { "ticker": "JPM", "name": "JPMorgan", "impact": "positive or negative or neutral", "reason": "one sentence" }
+    { "ticker": "AAPL", "name": "Apple", "impact": "positive or negative or neutral", "reason": "one sentence" }
   ],
   "affected_indices": [
     { "name": "S&P 500", "impact": "positive or negative or neutral", "reason": "one sentence" }
@@ -125,6 +152,8 @@ function getMockResponse() {
     talking_points: [
       "Monetary policy is shifting from restrictive to neutral",
       "Investors should watch PCE inflation data closely"
-    ]
+    ],
+    rag_context_used: false,
+    similar_articles_found: 0
   }
 }

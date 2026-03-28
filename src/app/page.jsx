@@ -134,6 +134,13 @@ export default function HomePage() {
             </div>
             <p className="text-gray-800 text-sm mb-2">{result.summary}</p>
             <p className="text-gray-500 text-xs">{result.risk_reason}</p>
+
+            {result.rag_context_used && (
+            <div className="flex items-center gap-2 mt-3 text-xs text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg w-fit">
+              <span>⚡</span>
+              <span>Enhanced with {result.similar_articles_found} similar past articles</span>
+            </div>
+             )}
           </div>
 
           {/* Affected Stocks with live prices */}
